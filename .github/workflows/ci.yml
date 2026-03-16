@@ -1,0 +1,84 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+    branches: ["*"]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check-secrets:
+    name: Check for secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for .env files
+        run: |
+          echo "Scanning for .env files in the repository..."
+          FOUND=$(find . -name ".env" -o -name ".env.*" | grep -v node_modules || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Secret files detected in repository:"
+            echo "$FOUND"
+            exit 1
+          else
+            echo "No .env files found. OK."
+          fi
+
+      - name: Scan for hardcoded secrets
+        run: |
+          echo "Scanning for potential hardcoded secrets..."
+          PATTERNS='(password|secret|api_key|apikey|access_token|private_key)\s*=\s*["\x27][^\s"'\'']+["\x27]'
+          RESULTS=$(grep -rniE "$PATTERNS" --include="*.sh" --include="*.py" --include="*.js" --include="*.yml" --include="*.yaml" --include="*.json" --include="*.conf" --include="*.cfg" . 2>/dev/null | grep -v '.github/workflows' || true)
+          if [ -n "$RESULTS" ]; then
+            echo "::error::Potential hardcoded secrets found:"
+            echo "$RESULTS"
+            exit 1
+          else
+            echo "No hardcoded secrets detected. OK."
+          fi
+
+  shellcheck:
+    name: ShellCheck lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck on lastname_script.sh
+        run: shellcheck lastname_script.sh
+
+  create-issue-on-failure:
+    name: Create Issue on failure
+    runs-on: ubuntu-latest
+    needs: [check-secrets, shellcheck]
+    if: failure()
+    steps:
+      - name: Create GitHub Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `CI Pipeline failed on ${context.sha.substring(0, 7)}`;
+            const body = [
+              `## CI Pipeline Failure`,
+              ``,
+              `**Branch:** \`${context.ref}\``,
+              `**Commit:** \`${context.sha}\``,
+              `**Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              `**Triggered by:** ${context.actor}`,
+              ``,
+              `One or more pipeline steps failed. Please review the workflow run for details.`
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['ci-failure']
+            });
