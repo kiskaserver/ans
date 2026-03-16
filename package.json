@@ -1,0 +1,9 @@
+{
+  "name": "ans",
+  "version": "1.0.0",
+  "description": "Log analysis toolkit",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
